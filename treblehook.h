@@ -68,6 +68,10 @@ int rebind_symbols_image(void *header,
                          struct rebinding rebindings[],
                          size_t rebindings_nel);
 
+FISHHOOK_VISIBILITY
+int rebind_dsc_direct_symbols_image(void *header,
+                         struct rebinding rebindings[],
+                                    size_t rebindings_nel);
 #ifdef __cplusplus
 }
 #endif //__cplusplus

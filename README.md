@@ -1,4 +1,7 @@
-# fishhook
+# treblehook
+
+treblehook, is a type of a fishhook. I learned that from ChatGPT. 
+treblehook is a sloopy improvement on FB's fishhhook as it can patch __TEXT.__auth  
 
 __fishhook__ is a very simple library that enables dynamically rebinding symbols in Mach-O binaries running on iOS in the simulator and on device. This provides functionality that is similar to using [`DYLD_INTERPOSE`][interpose] on OS X. At Facebook, we've found it useful as a way to hook calls in libSystem for debugging/tracing purposes (for example, auditing for double-close issues with file descriptors).
 
@@ -6,56 +9,53 @@ __fishhook__ is a very simple library that enables dynamically rebinding symbols
 
 ## Usage
 
-Once you add `fishhook.h`/`fishhook.c` to your project, you can rebind symbols as follows:
+Once you add `treblehook.h`/`treblehook.c` to your project, you can rebind symbols as follows:
 ```Objective-C
-#import <dlfcn.h>
 
-#import <UIKit/UIKit.h>
 
-#import "AppDelegate.h"
-#import "fishhook.h"
- 
-static int (*orig_close)(int);
-static int (*orig_open)(const char *, int, ...);
- 
-int my_close(int fd) {
-  printf("Calling real close(%d)\n", fd);
-  return orig_close(fd);
+#include <Foundation/Foundation.h>
+#include "treblehook.h"
+
+int (*og_kevent_qos)(int kq,
+                     const struct kevent_qos_s *changelist, int nchanges,
+                     struct kevent_qos_s *eventlist, int nevents,
+                     void *data_out, size_t *data_available,
+                     unsigned int flags);
+extern int     kevent_qos(int kq,
+                          const struct kevent_qos_s *changelist, int nchanges,
+                          struct kevent_qos_s *eventlist, int nevents,
+                          void *data_out, size_t *data_available,
+                          unsigned int flags);
+int     my_kevent_qos(int kq,
+                      const struct kevent_qos_s *changelist, int nchanges,
+                      struct kevent_qos_s *eventlist, int nevents,
+                      void *data_out, size_t *data_available,
+                      unsigned int flags) {
+  return og_kevent_qos(kq, changelist, nchanges, eventlist, nevents, data_out, data_available, flags);
 }
- 
-int my_open(const char *path, int oflag, ...) {
-  va_list ap = {0};
-  mode_t mode = 0;
- 
-  if ((oflag & O_CREAT) != 0) {
-    // mode only applies to O_CREAT
-    va_start(ap, oflag);
-    mode = va_arg(ap, int);
-    va_end(ap);
-    printf("Calling real open('%s', %d, %d)\n", path, oflag, mode);
-    return orig_open(path, oflag, mode);
-  } else {
-    printf("Calling real open('%s', %d)\n", path, oflag);
-    return orig_open(path, oflag, mode);
-  }
+
+
+int main(int argc, const char * argv[]) {
+
+  
+  extern const struct mach_header* dyld_image_header_containing_address(const void* addr);
+  const struct mach_header*  header = dyld_image_header_containing_address(dispatch_main);
+  struct rebinding binds[1] = {{"kevent_qos", my_kevent_qos, (void*)&og_kevent_qos}};
+  rebind_dsc_direct_symbols_image((void*)header, binds, 1);
+  
+  
+  dispatch_source_t timer = dispatch_source_create(DISPATCH_SOURCE_TYPE_TIMER, 0, 0, dispatch_get_main_queue());
+  dispatch_source_set_timer(timer, DISPATCH_TIME_NOW, 1 * NSEC_PER_SEC, 0 * NSEC_PER_SEC);
+  dispatch_source_set_event_handler(timer, ^{
+    printf("yo whatup\n");
+  });
+  
+  dispatch_activate(timer);
+  dispatch_main();
+  return 0;
 }
- 
-int main(int argc, char * argv[])
-{
-  @autoreleasepool {
-    rebind_symbols((struct rebinding[2]){{"close", my_close, (void *)&orig_close}, {"open", my_open, (void *)&orig_open}}, 2);
- 
-    // Open our own binary and print out first 4 bytes (which is the same
-    // for all Mach-O binaries on a given architecture)
-    int fd = open(argv[0], O_RDONLY);
-    uint32_t magic_number = 0;
-    read(fd, &magic_number, 4);
-    printf("Mach-O Magic Number: %x \n", magic_number);
-    close(fd);
- 
-    return UIApplicationMain(argc, argv, nil, NSStringFromClass([AppDelegate class]));
-  }
-}
+
+
 ```
 ### Sample output
 ```
