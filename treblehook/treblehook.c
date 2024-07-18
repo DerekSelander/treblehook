@@ -339,10 +339,6 @@ int rebind_dsc_direct_symbols_image(void *header,
                                     size_t rebindings_nel) {
   intptr_t slide = _dyld_get_image_slide(header);
   struct rebindings_entry *rebindings_head = NULL;
-  struct mach_header_64 *h = header;
-//  if (!(h->flags & MH_DYLIB_IN_CACHE)) {
-//    return -1;
-//  }
   int retval = prepend_rebindings(&rebindings_head, rebindings, rebindings_nel);
   
   rebind_symbols_for_image(rebindings_head, (const struct mach_header *) header, slide, true);
