@@ -23,6 +23,7 @@
 
 #include "treblehook.h"
 #include <stdio.h>
+#include <ptrauth.h>
 #include <dlfcn.h>
 #include <stdbool.h>
 #include <stdlib.h>
