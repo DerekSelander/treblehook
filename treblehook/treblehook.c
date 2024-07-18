@@ -34,14 +34,11 @@
 #include <mach/vm_map.h>
 #include <mach/vm_region.h>
 #include <mach-o/dyld.h>
+#include <mach-o/getsect.h>
 #include <mach-o/loader.h>
 #include <mach-o/nlist.h>
 #include <assert.h>
 #include <sys/sysctl.h>
-
-#if defined(__x86_64__)
-#error "This will crash given I wrote the opcodes for arm64, if you want x86_64 support file a tissue, yes a tissue"
-#endif
 
 #ifdef __LP64__
 typedef struct mach_header_64 mach_header_t;
@@ -247,10 +244,15 @@ static void perform_rebinding_with_section(struct rebindings_entry *rebindings,
 
 static void rebind_symbols_for_image(struct rebindings_entry *rebindings,
                                      const struct mach_header *header,
-                                     intptr_t slide, bool patch_branch_pool) {
+                                     intptr_t slide) {
   Dl_info info;
   if (dladdr(header, &info) == 0) {
     return;
+  }
+  bool patch_branch_pool = false;
+  unsigned long sz = 0;
+  if (getsectiondata((void*)header, "__TEXT", "__auth_data", &sz)) {
+    patch_branch_pool = true;
   }
   
   segment_command_t *cur_seg_cmd;
@@ -258,7 +260,6 @@ static void rebind_symbols_for_image(struct rebindings_entry *rebindings,
   struct symtab_command* symtab_cmd = NULL;
   struct dysymtab_command* dysymtab_cmd = NULL;
   
-//  bool in_dsc = header->flags & MH_DYLIB_IN_CACHE;
   uintptr_t cur = (uintptr_t)header + sizeof(mach_header_t);
   for (uint i = 0; i < header->ncmds; i++, cur += cur_seg_cmd->cmdsize) {
     cur_seg_cmd = (segment_command_t *)cur;
@@ -317,7 +318,7 @@ static void rebind_symbols_for_image(struct rebindings_entry *rebindings,
 
 static void _rebind_symbols_for_image(const struct mach_header *header,
                                       intptr_t slide) {
-  rebind_symbols_for_image(_rebindings_head, header, slide, false);
+  rebind_symbols_for_image(_rebindings_head, header, slide);
 }
 
 int rebind_symbols_image(void *header,
@@ -326,7 +327,7 @@ int rebind_symbols_image(void *header,
                          size_t rebindings_nel) {
   struct rebindings_entry *rebindings_head = NULL;
   int retval = prepend_rebindings(&rebindings_head, rebindings, rebindings_nel);
-  rebind_symbols_for_image(rebindings_head, (const struct mach_header *) header, slide, false);
+  rebind_symbols_for_image(rebindings_head, (const struct mach_header *) header, slide);
   if (rebindings_head) {
     free(rebindings_head->rebindings);
   }
@@ -341,7 +342,7 @@ int rebind_dsc_direct_symbols_image(void *header,
   struct rebindings_entry *rebindings_head = NULL;
   int retval = prepend_rebindings(&rebindings_head, rebindings, rebindings_nel);
   
-  rebind_symbols_for_image(rebindings_head, (const struct mach_header *) header, slide, true);
+  rebind_symbols_for_image(rebindings_head, (const struct mach_header *) header, slide);
   if (rebindings_head) {
     free(rebindings_head->rebindings);
   }
