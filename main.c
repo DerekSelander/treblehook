@@ -27,7 +27,7 @@ int main(int argc, const char * argv[]) {
   extern const struct mach_header* dyld_image_header_containing_address(const void* addr);
   const struct mach_header*  header = dyld_image_header_containing_address(dispatch_main);
   struct rebinding binds[1] = {{"kevent_qos", my_kevent_qos, (void*)&og_kevent_qos}};
-  rebind_dsc_direct_symbols_image((void*)header, binds, 1);
+  rebind_symbols_4_image((void*)header, binds, 1);
   
   dispatch_source_t timer = dispatch_source_create(DISPATCH_SOURCE_TYPE_TIMER, 0, 0, dispatch_get_main_queue());
   dispatch_source_set_timer(timer, DISPATCH_TIME_NOW, 1 * NSEC_PER_SEC, 0 * NSEC_PER_SEC);

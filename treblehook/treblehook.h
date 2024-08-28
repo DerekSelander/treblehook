@@ -68,8 +68,11 @@ int rebind_symbols_image(void *header,
                          struct rebinding rebindings[],
                          size_t rebindings_nel);
 
+/*
+ * convenience method for rebind_symbols_image that doesn't need the slide
+ */
 FISHHOOK_VISIBILITY
-int rebind_dsc_direct_symbols_image(void *header,
+int rebind_symbols_4_image(void *header,
                          struct rebinding rebindings[],
                                     size_t rebindings_nel);
 #ifdef __cplusplus

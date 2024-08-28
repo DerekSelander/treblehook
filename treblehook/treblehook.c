@@ -31,6 +31,7 @@
 #include <sys/mman.h>
 #include <sys/types.h>
 #include <mach/mach.h>
+#include <mach/task_info.h>
 #include <mach/vm_map.h>
 #include <mach/vm_region.h>
 #include <mach-o/dyld.h>
@@ -215,7 +216,6 @@ static void perform_rebinding_with_section(struct rebindings_entry *rebindings,
                  * -- Lionfore Hao Jun 11th, 2021
                  **/
                 *resolved_ptr = ptrauth_sign_unauthenticated(strip_pac(cur->rebindings[j].replacement), ptrauth_key_function_pointer, resolved_ptr);
-//                *resolved_ptr = cur->rebindings[j].replacement);
               }
             } else {
               *(cur->rebindings[j].replaced) = indirect_symbol_bindings[i];
@@ -335,7 +335,8 @@ int rebind_symbols_image(void *header,
   return retval;
 }
 
-int rebind_dsc_direct_symbols_image(void *header,
+
+int rebind_symbols_4_image(void *header,
                                     struct rebinding rebindings[],
                                     size_t rebindings_nel) {
   intptr_t slide = _dyld_get_image_slide(header);
