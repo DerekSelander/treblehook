@@ -45,6 +45,39 @@
 
 #pragma mark - Preprocessor stuff -
 
+#ifdef TARGET_OS_IPHONE // omg, why, Apple
+kern_return_t mach_vm_protect
+(
+  vm_map_t target_task,
+  mach_vm_address_t address,
+  mach_vm_size_t size,
+  boolean_t set_maximum,
+  vm_prot_t new_protection
+);
+
+kern_return_t mach_vm_write
+(
+  vm_map_t target_task,
+  mach_vm_address_t address,
+  vm_offset_t data,
+  mach_msg_type_number_t dataCnt
+);
+
+kern_return_t mach_vm_deallocate
+(
+  vm_map_t target,
+  mach_vm_address_t address,
+  mach_vm_size_t size
+);
+kern_return_t mach_vm_allocate
+(
+  vm_map_t target,
+  mach_vm_address_t *address,
+  mach_vm_size_t size,
+  int flags
+);
+#endif
+
 #ifdef __LP64__
 typedef struct mach_header_64 mach_header_t;
 typedef struct segment_command_64 segment_command_t;
