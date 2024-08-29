@@ -261,6 +261,14 @@ typedef struct {
 } arm64_br_op;
 static_assert(sizeof(arm64_br_op) == sizeof(uint32_t), "br reg bad size");
 
+typedef struct {
+  uint32_t sreg      :  5; // 0
+  uint32_t dreg      :  5; // Which register to branch to
+  uint32_t op        : 22; // Should be 0b1101011100011111000010
+} arm64_braa_op;
+
+static_assert(sizeof(arm64_braa_op) == sizeof(uint32_t), "braa reg bad size");
+
 uint32_t create_br_opcode (uint8_t dreg) {
   uint32_t op = 0;
   arm64_br_op *a = (void*)&op;
@@ -272,6 +280,14 @@ uint32_t create_br_opcode (uint8_t dreg) {
 bool is_br_instruction(uint32_t *insr) {
   arm64_br_op *ins =  (void*)insr;
   if (ins->op == 0b1101011000011111000000 ) {
+    return true;
+  }
+  return false;
+}
+
+bool is_braa_instruction(uint32_t *insr) {
+  arm64_braa_op *ins =  (void*)insr;
+  if (ins->op == 0b1101011100011111000010 ) {
     return true;
   }
   return false;
@@ -299,7 +315,7 @@ static int prepend_rebindings(struct rebindings_entry **rebindings_head,
 
 /// This needs to be free of any explicit function references as this code gets copied to a different page of memory so it doesn't get f'd if we are
 /// setting RW- on the calling memory (typically if this code is compiled iinto the same library that is introspecting an external symbol)
-static kern_return_t modify_memory(task_t task, vm_address_t address, vm_size_t size, vm_address_t* patching_address, void* new_value, vm_prot_t og_protection, void* _vm_protect) {
+static kern_return_t modify_memory(task_t task, vm_address_t address, vm_size_t size, char* patching_address, char* new_value, vm_prot_t og_protection, void* _vm_protect) {
   
   kern_return_t kr = 0;
   
@@ -314,14 +330,16 @@ static kern_return_t modify_memory(task_t task, vm_address_t address, vm_size_t 
      * -- Lionfore Hao Jun 11th, 2021
      **/
     
-    *patching_address = (vm_address_t)new_value;
+  }
+  for (int i = 0; i < size; i++) {
+    patching_address[i] = new_value[i];
   }
   
   kr = local_vm_protect (task, (uintptr_t)address,  size, 0, og_protection);
   return kr;
 }
 
-static kern_return_t patch_executable_memory(struct rebindings_entry *cur,  void *indirect_symbol_bindings, void* new_value) {
+static kern_return_t patch_executable_memory(struct rebindings_entry *cur,  void *indirect_symbol_bindings, void* new_value, vm_size_t patch_size) {
   
   vm_size_t sz = get_page_size();
   mach_vm_address_t addr = 0;
@@ -331,15 +349,16 @@ static kern_return_t patch_executable_memory(struct rebindings_entry *cur,  void
   // this should be the default, but make sure...
   HANDLE_ERR_RET(mach_vm_protect(mach_task_self(), addr, sz, 0, VM_PROT_READ|VM_PROT_WRITE));
   // write mem to newly allocated address
-  HANDLE_ERR_RET(mach_vm_write(mach_task_self(), addr, (vm_address_t)modify_memory, (mach_msg_type_number_t)sz /* rounding up, yolo */));
+  HANDLE_ERR_RET(mach_vm_write(mach_task_self(), addr, (vm_address_t)strip_pac(modify_memory), (mach_msg_type_number_t)sz /* rounding up, yolo */));
   // make it R-X, shouldn't need a COW here
   HANDLE_ERR_RET(vm_protect(mach_task_self(), addr, sz, 0, VM_PROT_READ|VM_PROT_EXECUTE));
   
   vm_address_t patching_memory = (vm_address_t)indirect_symbol_bindings;
   HANDLE_ERR_RET(get_mem_protection((void*)patching_memory, &protections, NULL));
   
-  kern_return_t (*dup_modify_memory)(task_t task, vm_address_t address, vm_size_t size, vm_address_t *patching_address, void* new_value, vm_prot_t og_protection, void* _vm_protect) = (void*)addr;
-  HANDLE_ERR_RET(dup_modify_memory(mach_task_self(), patching_memory, sizeof(void*),  (vm_address_t*)indirect_symbol_bindings, new_value, protections, mach_vm_protect));
+  kern_return_t (*dup_modify_memory)(task_t task, vm_address_t address, vm_size_t size, vm_address_t *patching_address, void* new_value, vm_prot_t og_protection, void* _vm_protect) = ptrauth_sign_unauthenticated((void*)addr, ptrauth_key_function_pointer, 0);
+  
+  HANDLE_ERR_RET(dup_modify_memory(mach_task_self(), patching_memory, patch_size,  (vm_address_t*)indirect_symbol_bindings, new_value, protections, mach_vm_protect));
   
   HANDLE_ERR_RET(mach_vm_deallocate(mach_task_self(), addr, sz));
   
@@ -358,6 +377,7 @@ static void perform_rebinding_with_section(struct rebindings_entry *rebindings,
   void **indirect_symbol_bindings = (void **)((uintptr_t)slide + section->addr);
   
   // og code expected pointers, but we need be smart about the size given it's declared in reserved2
+  size_t stub_size = section->reserved2;
   for (uint i = 0; i < section->size / (section->reserved2 ? section->reserved2 : sizeof(void*)); i++) {
     uint32_t symtab_index = indirect_symbol_indices[i];
     if (symtab_index == INDIRECT_SYMBOL_ABS || symtab_index == INDIRECT_SYMBOL_LOCAL ||
@@ -433,24 +453,50 @@ static void perform_rebinding_with_section(struct rebindings_entry *rebindings,
                 *resolved_ptr = ptrauth_sign_unauthenticated(strip_pac(cur->rebindings[j].replacement), ptrauth_key_function_pointer, resolved_ptr);
               } else {
                 PRINT_DEBUG("Couldn't modify region %p, trying plan B...\n", resolved_ptr);
+                // So this version of macOS they actually made __DATA_CONST a const (wow! 👏)
+                // and so I can't change around memory permissions, (unless I did something
+                // really dumb and made code from that)...
+                //
+                // So plan B is to go after the stubs themselves and hope they fall +-4GB away
+                // In ARM64e, I have 4 instructions to jump, which will allow all addresses
+                // And maybe will be something I impelement one day, but for right now, we'll
+                // assume the default of...
+                // In arm64, I have 3 instructions which gives me a 4GB+- offset
+                // In the future, maybe I'll implement branch pools, but it would take someone
+                // who actually reads this to show that someone else is using this code
+                // and file a github issue
+                //
+                // arm64 usually has a reserved size of 0xC
+                // which will be something like ardp, add, br
+                //
+                // arm64e usually has a reserved size of 0x10
+                // which will be something like ardp, add, ldr, braa
+                // we'll change the braa to a br for arm64e
+                
                 arm64_br_op *br_opcode = (void *)(uintptr_t)resolved_auth_stub + (sizeof(uint32_t) * 2);
-                if (!is_br_instruction((void*)br_opcode)) {
+                if (!is_br_instruction((void*)br_opcode) && !is_ldr_instruction((void*)br_opcode)) {
                   PRINT_ERROR("Unknown opcode?!!! 0x%x Tell author\n", *(int*)opcode2);
                   DEBUG_DIAGNOSE();
                 }
                 
-                // So this version of macOS they actually made __DATA_CONST a const
-                // and so I can't change around memory permissions, (unless I did something
-                // really dumb and made code from that)...
+                size_t patch_mem_size = sizeof(uint32_t) * 2;
+                uint32_t ops[4] = {};
                 
-                // So plan B is to go after the stubs themselves and hope they fall +-4GB away
-                // to where I want them to jump to, if not, I bail and no patch occurs.
+                memcpy(ops, (void*)resolved_auth_stub, sizeof(uint32_t) * 4);
+                if (is_ldr_instruction((void*)br_opcode) && is_braa_instruction((void *)(uintptr_t)resolved_auth_stub + (sizeof(uint32_t) * 3))) {
+                  br_opcode++;
+                  patch_mem_size = sizeof(uint32_t) * 4;
+                  uint32_t newopcode = create_br_opcode(destination_reg);
+                  ops[2] = 0xD503201F; // no-op
+                  memcpy(&ops[3], &newopcode, sizeof(uint32_t));
+                  // br has the same jumping reg as braa and we only care about that
+                }
+                
+              
 
-                uint64_t opcodes = 0;
-                uint32_t *ops = (void*)&opcodes;
-                ops[0] = create_adrp_opcode(br_opcode->dreg, resolved_auth_stub, (uintptr_t)cur->rebindings[j].replacement);
-                ops[1] = create_add_opcode(br_opcode->dreg, br_opcode->dreg, (int16_t)(uintptr_t)cur->rebindings[j].replacement & 0xFFF, false);
-                HANDLE_ERR(patch_executable_memory(cur, (void*)resolved_auth_stub, (void*)opcodes));
+                ops[0] = create_adrp_opcode(destination_reg, resolved_auth_stub, (uintptr_t)strip_pac(cur->rebindings[j].replacement));
+                ops[1] = create_add_opcode(destination_reg, destination_reg, (int16_t)(uintptr_t)cur->rebindings[j].replacement & 0xFFF, false);
+                HANDLE_ERR(patch_executable_memory(cur, (void*)resolved_auth_stub, (void*)&ops, patch_mem_size));
               }
               
             } else { // !patch_branch_pool
@@ -492,7 +538,7 @@ static void rebind_symbols_for_image(struct rebindings_entry *rebindings,
   if (dladdr(header, &info) == 0) {
     return;
   }
-  if (getsectiondata((void*)header, "__TEXT", "__auth_data", &sz)) {
+  if (getsectiondata((void*)header, "__TEXT", "__auth_data", &sz) || getsectiondata((void*)header, "__TEXT", "__auth_stubs", &sz) ) {
     patch_branch_pool = true;
   }
   
