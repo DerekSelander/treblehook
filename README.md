@@ -1,7 +1,6 @@
 # treblehook
 
-treblehook, is a type of a fishhook. I learned that from ChatGPT. 
-treblehook is a sloopy improvement on FB's fishhhook as it can patch __TEXT.__auth_stubs  
+treblehook is a sloopy improvement on FB's fishhook and is designed specifically for arm64/arm64e. treblehook will allow you to intercept symbol calls across libraries & frameworks.
 
 __fishhook__ is a very simple library that enables dynamically rebinding symbols in Mach-O binaries running on iOS in the simulator and on device. This provides functionality that is similar to using [`DYLD_INTERPOSE`][interpose] on OS X. At Facebook, we've found it useful as a way to hook calls in libSystem for debugging/tracing purposes (for example, auditing for double-close issues with file descriptors).
 
