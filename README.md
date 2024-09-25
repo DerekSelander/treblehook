@@ -53,15 +53,11 @@ int main(int argc, const char * argv[]) {
 }
 
 ```
-### Sample output
-```
-Calling real open('/var/mobile/Applications/161DA598-5B83-41F5-8A44-675491AF6A2C/Test.app/Test', 0)
-Mach-O Magic Number: feedface 
-Calling real close(3)
-...
-```
+
 
 ## How it works
+
+Slightly dated, but read [this symbol interposing writeup](https://github.com/DerekSelander/symbol-interposing?tab=readme-ov-file#symbol-binding-detour). trebelhook will attempt to rebind symbols in certain memory segments that could be made into R/W.  If that fails (likely because that page can be mapped to a file on disk), treblehook will attempt to modify executable code. As a result treblehook should only be used in code that has the `com.apple.security.cs.allow-unsigned-executable-memory`, is being debugged, or is not signed at all in order to allow treblehook to run invalid pages of memory should it be required to rebind executable memory.
 
 `dyld` binds lazy and non-lazy symbols by updating pointers in particular sections of the `__DATA` segment of a Mach-O binary. __fishhook__ re-binds these symbols by determining the locations to update for each of the symbol names passed to `rebind_symbols` and then writing out the corresponding replacements.
 
